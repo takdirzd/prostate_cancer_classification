@@ -1,0 +1,293 @@
+---
+title: "Prostate Cancer Classification"
+author: "Takdir Zulhaq Dessiaming"
+date: "2022-08-23"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+    theme: united
+    highlight: zenburn
+    df_print: paged
+---
+# Intro
+
+Pada kesempatan kali ini, saya akan mencoba melakukan prediksi terhadap pasien yang terkena kanker prostat, akan diprediksi apakah kankernya ganas atau jinak  kategori dari beberapa variabel penunjangnya. Algoritma yang akan saya gunakan yaitu menggunakan logistik regression dan k-nearest neighbor yang termasuk dalam supervised learning.
+
+Tujuan dalam analisis kali ini adalah akan memprediksi apakah kanker tersebut ganas atau jinak, dan kita ingin membuat model yang memfokuskan untuk mendeteksi kanker prostat yang ganas (Malignant).
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(GGally)
+library(caret)
+library(class)
+library(rsample)
+```
+ 
+Dataset yang akan saya gunakan yaitu data mengenai pasien yang terkena kanker prostat berdasarkan beberapa karakteristik yang menyertai yang dapat Anda unduh langsung pada Kaggle https://www.kaggle.com/datasets/sajidsaifi/prostate-cancer.
+
+# Import Data
+```{r}
+df <- read.csv("Prostate_Cancer.csv")
+df
+```
+Dari data yang ada, terdapat 10 kolom dan 100 baris data. Untuk kebutuhan analisa kita, kita akan membuang kolom yang dirasa tidak perlu untuk masuk ke analisis kita.
+
+# Data Cleaning
+```{r}
+df <- df %>% 
+          select(-id) %>% 
+          mutate(diagnosis_result = factor(diagnosis_result,
+                 levels = c("B", "M"),
+                 labels = c("Benign", "Malignant")))
+df
+```
+Kita membuang kolom id, dan mengubah isi data di kolom diagnosis_result agar lebih informatif.
+
+# Exploratory Data Analysis
+
+Pada tahap ini, kita akan mengeksplorasi data.
+
+```{r}
+is.na(df) %>% colSums()
+glimpse(df)
+
+```
+Dapat dilihat, data yang kita gunakan sudah sesuai dengan tipe data yang seharusnya, dan tidak terdapat missing value.
+
+# Logistic Regression
+
+Sebagai metode pertama, kita akan menggunakan metode Logistik Regression dalam memprediksi data kita.
+
+## Pre-Processing Data
+
+Sebelum melakukan pemodelan, kita perlu melihat terlebih dahulu proporsi dari target variabel yang kita miliki pada kolom diagnosis_result.
+
+```{r}
+prop.table(table(df$diagnosis_result))
+table(df$diagnosis_result)
+```
+Kita melihat proporsi data yang ada, karena akan lebih baik jika data yang kita punya seimbang, dan data diatas bisa dibilang cukup seimbang untuk kita jadikan model.
+
+### Cross Validation
+
+Selanjutnya yaitu melakukan splitting data menjadi data train dan data test. Tujuannya yaitu pada data train akan kita gunakan untuk modeling/pelatihan, sedangkan data test akan kita gunakan sebagai penguji model yang sudah kita buat jika dihadapkan dengan unseen data (data baru). Selain itu hal ini dapat digunakan untuk melihat kemampuan model yang kita buat dalam menghadapi unseen data.
+
+
+```{r}
+
+set.seed(100) # merujuk pada key untuk proses CV knn
+
+index <- initial_split(data=df,  # data awal sebelum split
+                       prop = 0.7, #proporsi split 80:20
+                       strata = diagnosis_result) #label kelas agar pembagian train dan test antara kelas positif dan negatif sama
+
+df_train <- training(index)
+df_test <- testing(index)
+```
+
+
+```{r}
+prop.table(table(df_train$diagnosis_result))
+
+prop.table(table(df_test$diagnosis_result))
+```
+
+## Modelling
+
+Untuk tahap ini, kita melakukan pemodelan dengan menggunakan regresi logistik. Pemodelan menggunakan fungsi glm() dalam memodelkan menggunakan regresi logistik. Variabel yang digunakan adalah beberapa variabel yang kita anggap mempengaruhi target variabel, dimana variabel target menjadi variabel responnya.
+
+```{r}
+ggcorr(data = df,  hjust = 1, layout.exp = 3, label = T)
+
+```
+```{r}
+# model_base <- glm(formula = diagnosis_result ~ perimeter+compactness+symmetry+fractal_dimension, family = "binomial", 
+#              data = df_train)
+# summary(model_base)
+```
+
+### All Predictor
+
+```{r}
+model <- glm(formula = diagnosis_result ~., family = "binomial", 
+             data = df_train)
+summary(model)
+```
+Jika dilihat dari model yang sudah dibuat, terlihat bahwa prediktornya tidak ada yang signifikan terhadap target. Maka dari itu kita akan mencoba menggunakan Step-Wise Regression.
+
+### Step-wise Method
+
+```{r}
+step(model, direction = "backward", trace = FALSE)
+```
+
+```{r}
+model2 <- glm(formula = diagnosis_result ~ area + compactness, family = "binomial", 
+    data = df_train)
+
+summary(model2)
+```
+
+Dengan menggunakan step "backward", kita mendapatkan model yang lebih baik dari sebelumnya. Terlihat bahwa terdapat 2 prediktor yang signifikan, yaitu area dan compactness.
+
+## Predict
+
+Pada tahap ini kita akan melakukan prediksi pada data df_test/unseen data, menggunakan model yang sudah kita training sebelumnya.
+
+```{r}
+df_test$pred_diagnosis <- predict(object = model2, newdata = df_test , type = "response")
+df_test
+```
+
+```{r}
+df_test$pred_label <- ifelse(df_test$pred_diagnosis>0.5 , "Malignant" , "Benign") %>% as.factor()
+df_test
+```
+
+```{r}
+df_test %>% select(diagnosis_result,pred_diagnosis,pred_label)
+```
+
+## Model Evaluation
+
+Setelah membuat model, kita tidak akan langsung menggunakannya, akan tetapi kita evaluasi model tersebut terlebih dahulu, untuk mengukur apakah model tersebut layak kita gunakan atau tidak.
+
+### Confusion Matrix
+
+```{r}
+table(predicted = df_test$pred_label, actual = df_test$diagnosis_result)
+```
+
+```{r}
+confusionMatrix(data = df_test$pred_label, reference = df_test$diagnosis_result, positive="Malignant")
+```
+
+
+# K-NN
+
+Selanjutnya, kita akan menggunakan metode K-NN (K-Nearest Neighbour) dalam memprediksi data kita.
+
+## Cross Validation
+
+Dalam tahap ini, kita langsung saja membagi data menjadi data train dan data testing, karena Data Cleaning sudah dilakukan diatas.
+
+```{r}
+
+set.seed(100) # merujuk pada key untuk proses CV knn
+
+index <- initial_split(data=df,  # data awal sebelum split
+                       prop = 0.7, #proporsi split 80:20
+                       strata = diagnosis_result) #label kelas agar pembagian train dan test antara kelas positif dan negatif sama
+
+train <- training(index)
+test <- testing(index)
+```
+
+```{r}
+prop.table(table(train$diagnosis_result))
+
+prop.table(table(test$diagnosis_result))
+```
+Proporsi data terlihat cukup seimbang, dan dapat kita gunakan untuk modelling.
+
+```{r}
+# prediktor data train
+train_x <- train %>% select_if(is.numeric) # dipilih semua kolom yang numerik karena akan discaling
+
+# target data train
+train_y <- train %>% select(diagnosis_result) # dipisahkan khusus untuk kelas target
+
+# prediktor data test
+test_x <- test %>% select_if(is.numeric)
+
+# target data test
+test_y <-  test %>% select(diagnosis_result)
+```
+
+```{r}
+# code ini hanya boleh dirun 1 kali
+train_x <- scale(train_x)
+
+test_x <- scale(test_x, 
+                center=attr(train_x, "scaled:center"), #nilai rata-rata train
+                scale=attr(train_x, "scaled:scale")) # nilai sd train
+
+```
+
+Sebagai tambahan, dalam tahap diatas, kita melakukan scaling terhadap data kita, atau bisa dibilang, kita menyamakan ukuran dari data kita, sehingga model yang dihasilkan oleh K-NN bisa maksimal.
+
+## Modelling
+
+Untuk memilih K-nya, kita melihat dari akar dari jumlah baris dari data kita. 
+
+```{r}
+sqrt(nrow(train_x))
+```
+Angka yang didapatkan kemudian kita bulatkan jadi 9, karena data kita genap (100 baris), maka K-nya harus ganjil, agar model K-NN dapat menitik beratkan di salah satu data kita (Malignant atau Benign) sehingga data baru / unseen data, dapat diklasifikasikan ke data yang ada di titik beratnya. (tidak boleh seimbang)
+
+```{r}
+df_pred <- knn(train = train_x, #prediktor data train
+    test = test_x, #prediktor data test
+    cl = train_y$diagnosis_result, #target data train
+    k=9) # jumlah k yang digunakan untuk klasifikasi
+
+```
+
+# Model Comparison 
+
+```{r}
+# K-NN
+confusionMatrix(data=df_pred, reference=test_y$diagnosis_result, positive="Malignant")
+```
+
+
+
+```{r}
+# LOGISTIC REGRESSION
+
+confusionMatrix(data = df_test$pred_label, reference = df_test$diagnosis_result, positive="Malignant")
+```
+
+# Conclusion 
+
+Berdasarkan 2 model yang sudah kita buat, kurang lebih model hampir sama baiknya. Akan tetapi dalam pemilihan model machine learning, kita juga harus menyesuaikan dengan kebutuhan/tujuan kita di awal.
+
+Tujuan kita yaitu ingin memfokuskan untuk mendeteksi kanker prostat yang ganas (Malignant).
+
+Setelah dilakukan prediksi menggunakan model, masih ada saja prediksi yang salah. Pada klasifikasi, kita mengevaluasi model berdasarkan confusion matrix:
+
+
+```{r}
+knitr::include_graphics("img/tnfp.PNG")
+```
+
+* TP (True Positive) = Ketika kita memprediksi kelas positive, dan itu benar
+* TN (True Negative) = Ketika kita memprediksi kelas negative, dan itu benar
+* FP (False Positive) = Ketika kita memprediksi kelas positive, dan itu salah 
+* FN (False Negative) = Ketika kita memprediksi kelas negative, dan itu salah
+
+-------
+
+- Accuracy: seberapa tepat model kita memprediksi kelas target (secara global)   
+- Sensitivity/ Recall: ukuran kebaikan model terhadap kelas `positif`   
+- Specificity: ukuran kebaikan model terhadap kelas `negatif`   
+- Pos Pred Value/Precision: seberapa presisi model memprediksi kelas positif 
+
+Kita ingin mengurangi prediksi seseorang terkena kanker prostat Jinak (prediksi kelas Benign), namun aktualnya orang tersebut terkena kanker prostat yang Ganas (aktual kelas Malignant). 
+
+FN : ketika kita prediksi seseorang kankernya jinak, namun aslinya kankernya ganas   
+
+FP : ketika kita prediksi seseorang kankernya ganas, namun aslinya kankernya jinak
+
+recall: ketika kita ingin meminimalisir FN
+Precision : ketika kita ingin meminimalisir FP
+
+Untuk kasus ini kita akan mengurangi FN atau FP, agar pengembangan model kedepannya lebih baik juga. Kita ingin mengurangi kesalahan model dalam memprediksi kanker ganas, maka dari itu, kita akan mengurangi FN, agar dapat dilakukan pemeriksaan lanjutan, dan juga guna untuk mengurangi resiko orang tersebut kankernya semakin parah.
+
+Maka dari itu, kita dapat memilih model dengan metode **K-NN**, karena **Sensitivity/ Recall lebih baik** dibandingkan dengan metode Logistic Regression.
+
+
+
+
